@@ -1,0 +1,43 @@
+<!doctype html><html><head><base target="_top"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--forest:#173527;--deep:#0d2518;--gold:#a98237;--cream:#f2ebdf;--paper:#fffdf9;--line:rgba(23,53,39,.16);--muted:#5a645c}*{box-sizing:border-box}body{margin:0;background:transparent;color:var(--deep);font:14px/1.5 Arial,sans-serif}.portal{padding:8px}.privacy-banner{margin-bottom:14px;padding:14px 16px;border-radius:16px;background:#edf4ee;border:1px solid rgba(23,53,39,.15);font-size:12px;color:var(--forest)}.form{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:grid;gap:6px}.full{grid-column:1/-1}label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--forest)}input,select,textarea{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:14px;background:white}textarea{min-height:88px;resize:vertical}.drop{padding:22px;border:1.5px dashed rgba(169,130,55,.5);border-radius:18px;background:var(--paper);text-align:center}.drop input{border:0;padding:0}.note{font-size:12px;color:var(--muted);margin-top:7px}.consent{display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:start;font-size:12px;color:var(--muted)}.consent input{width:auto;margin-top:2px}.btn{width:100%;min-height:48px;border:0;border-radius:999px;background:var(--forest);color:white;font-weight:700}.btn:disabled{opacity:.55}.status{display:none;margin-top:14px;padding:14px;border-radius:14px;background:var(--cream)}.status.show{display:block}.error{background:#f8e7e2;color:#7a2e21}.success{background:#e7f1e9;color:var(--forest)}.progress{height:8px;border-radius:999px;background:#e9e3d8;overflow:hidden;margin-top:10px}.progress span{display:block;height:100%;width:0;background:var(--gold);transition:width .2s ease}@media(max-width:620px){.form{grid-template-columns:1fr}.full{grid-column:auto}}</style></head><body><div class="portal">
+<div class="privacy-banner"><strong>Private submission folder:</strong> every completed submission creates a new restricted subfolder inside the authorised CNP Drive destination. Submitters cannot see the destination folder, previous submissions or other brands’ files.</div>
+<form id="uploadForm" class="form">
+<div class="field"><label for="brand">Brand name</label><input id="brand" required></div><div class="field"><label for="product">Product name</label><input id="product" required></div>
+<div class="field"><label for="email">Contact email</label><input id="email" type="email" required></div><div class="field"><label for="plan">Plan</label><select id="plan"><option>Bronze — CNP Verified</option><option>Silver — In-Silico Validated</option><option>Gold — Experimentally Validated</option></select><div class="note"><strong>Bronze and Silver:</strong> digital files only. <strong>Gold:</strong> samples are requested separately after protocol approval.</div></div>
+<div class="field full"><label for="accessCode">Access code (only if provided by CNP)</label><input id="accessCode" autocomplete="off"></div>
+<div class="field full"><label for="notes">Notes</label><textarea id="notes" placeholder="Add context about the dossier, claims or files."></textarea></div>
+<div class="field full"><label>Files</label><div class="drop"><input id="files" type="file" multiple required><div class="note">Maximum 12 files; 8 MB per file. For larger files, include a secure cloud link in the notes.</div></div></div>
+<div class="field full"><label class="consent"><input id="authorization" type="checkbox" required><span>I confirm that I am authorised to share these files and that I have removed personal data not necessary for the CNP assessment.</span></label></div><div class="field full"><label class="consent"><input id="privacyNotice" type="checkbox" required><span>I have read the CNP Data Protection Notice and understand that contact data and uploaded files will be used for product assessment and related communication.</span></label></div>
+<div class="field full"><button class="btn" id="submitButton" type="submit">Submit Your Product</button><div class="progress" id="progress" hidden><span id="progressBar"></span></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
+</form></div><script>
+const form=document.getElementById('uploadForm'),statusBox=document.getElementById('status'),button=document.getElementById('submitButton'),progress=document.getElementById('progress'),progressBar=document.getElementById('progressBar'),filesInput=document.getElementById('files');
+function showStatus(message,type=''){statusBox.className='status show '+type;statusBox.textContent=message}
+function readFile(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({name:file.name,mimeType:file.type||'application/octet-stream',data:String(reader.result).split(',')[1]});reader.onerror=()=>reject(new Error(`Could not read ${file.name}.`));reader.readAsDataURL(file)})}
+function callServer(functionName,...args){return new Promise((resolve,reject)=>{google.script.run.withSuccessHandler(resolve).withFailureHandler(error=>reject(new Error(error&&error.message?error.message:String(error))))[functionName](...args)})}
+form.addEventListener('submit',async event=>{
+  event.preventDefault();
+  const files=[...filesInput.files];
+  if(!files.length){showStatus('Please select at least one file.','error');return}
+  if(files.length>12){showStatus('Maximum 12 files per submission.','error');return}
+  const tooLarge=files.find(file=>file.size>8*1024*1024);
+  if(tooLarge){showStatus(`${tooLarge.name} exceeds the 8 MB limit.`,'error');return}
+  button.disabled=true;button.textContent='Creating private submission folder…';progress.hidden=false;progressBar.style.width='3%';showStatus('Preparing a new restricted Drive subfolder…');
+  try{
+    const metadata={brand:document.getElementById('brand').value.trim(),product:document.getElementById('product').value.trim(),email:document.getElementById('email').value.trim(),plan:document.getElementById('plan').value,accessCode:document.getElementById('accessCode').value,notes:document.getElementById('notes').value.trim(),authorizationConfirmed:document.getElementById('authorization').checked,privacyNoticeAccepted:document.getElementById('privacyNotice').checked,privacyNoticeVersion:'2026-07-v1'};
+    const started=await callServer('startSubmission',metadata);
+    const uploaded=[];
+    for(let index=0;index<files.length;index++){
+      button.textContent=`Uploading ${index+1} of ${files.length}…`;
+      showStatus(`Uploading ${files[index].name} to private submission ${started.receiptCode}…`);
+      const encoded=await readFile(files[index]);
+      uploaded.push(await callServer('uploadSubmissionFile',started.submissionId,encoded));
+      progressBar.style.width=`${Math.round(((index+1)/files.length)*90)}%`;
+    }
+    const result=await callServer('finishSubmission',started.submissionId,uploaded);
+    progressBar.style.width='100%';
+    showStatus(`Upload complete. Receipt ${result.receiptCode}. ${result.fileCount} file(s) received in a new private CNP folder.`,'success');
+    form.reset();
+  }catch(error){showStatus(error.message||String(error),'error')}
+  finally{button.disabled=false;button.textContent='Submit Your Product';setTimeout(()=>{progress.hidden=true;progressBar.style.width='0'},1400)}
+});
+</script></body></html>
